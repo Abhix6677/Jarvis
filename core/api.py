@@ -77,6 +77,10 @@ class GPTClient:
                 if not isinstance(message, dict):
                     raise RuntimeError("Invalid API response: missing assistant message.")
 
+                # Reject tool / function call responses explicitly
+                if message.get("tool_calls") or message.get("function_call"):
+                    raise RuntimeError("Provider returned tool call instead of user-visible text.")
+
                 if message.get("role") != "assistant":
                     raise RuntimeError("Invalid API response: expected assistant role.")
 
