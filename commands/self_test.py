@@ -9,12 +9,13 @@ import tempfile
 import traceback
 from typing import Any, Dict
 
-from core import api
-from core import memory
-from core import project_resolver
-from commands import router
-from core import storage
+from core.api import get_client
+from core.memory import MemoryManager
+from core.project_resolver import detect_project_root, compute_project_id
+from commands.router import list_commands
+from core.storage import safe_load_json, atomic_write_json
 from core.logger import get_logger
+from pathlib import Path
 
 
 EXIT_OK = 0
@@ -25,9 +26,11 @@ logger = get_logger(__name__)
 
 def _api_test() -> bool:
     try:
-        # Non-persistent connectivity check
-        api.ping()
-        return True
+        # Test API connectivity with minimal request
+        client = get_client()
+        test_msg = [{"role": "user", "content": "test"}]
+        response = client.chat(test_msg)
+        return isinstance(response, str) and len(response) > 0
     except Exception:
         logger.exception("API connectivity test failed")
         return False
@@ -35,12 +38,15 @@ def _api_test() -> bool:
 
 def _storage_test() -> bool:
     try:
-        test_key = "self_test_temp_key"
-        test_value = {"status": "ok"}
+        import tempfile
+        # Test storage with temporary file
+        test_dir = Path(tempfile.gettempdir())
+        test_file = test_dir / "self_test_temp.json"
+        test_value = {"status": "ok", "key": "value"}
 
-        storage.save_cache(test_key, test_value)
-        loaded = storage.load_cache(test_key)
-        storage.delete_cache(test_key)
+        atomic_write_json(test_file, test_value)
+        loaded = safe_load_json(test_file, None)
+        test_file.unlink(missing_ok=True)
 
         return loaded == test_value
     except Exception:
@@ -50,14 +56,16 @@ def _storage_test() -> bool:
 
 def _memory_test() -> bool:
     try:
-        namespace = "__self_test_namespace__"
-        test_data = {"ping": "pong"}
+        # Test memory operations
+        mm = MemoryManager()
+        test_key = "__self_test_temp__"
+        test_value = "ping"
 
-        memory.save(namespace, test_data)
-        loaded = memory.load(namespace)
-        memory.delete(namespace)
+        mm.remember(test_key, test_value)
+        loaded = mm.get_all().get(test_key)
+        mm.forget(test_key)
 
-        return loaded == test_data
+        return loaded == test_value
     except Exception:
         logger.exception("Memory test failed")
         return False
@@ -65,7 +73,9 @@ def _memory_test() -> bool:
 
 def _router_test() -> bool:
     try:
-        commands = router.discover_commands()
+        from commands.router import _ensure_discovered
+        _ensure_discovered()
+        commands = list_commands()
         return isinstance(commands, dict)
     except Exception:
         logger.exception("Router discoverability test failed")
@@ -74,8 +84,9 @@ def _router_test() -> bool:
 
 def _project_resolver_test() -> bool:
     try:
-        path = project_resolver.resolve_project_root(os.getcwd())
-        return path is not None
+        root, _ = detect_project_root()
+        project_id = compute_project_id(root)
+        return project_id is not None and len(project_id) > 0
     except Exception:
         logger.exception("Project resolver test failed")
         return False

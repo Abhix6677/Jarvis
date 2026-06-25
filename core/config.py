@@ -3,6 +3,26 @@ import json
 from pathlib import Path
 from dataclasses import dataclass
 
+# Load .env file if it exists
+def _load_env_file():
+    env_file = Path(__file__).parent.parent / ".env"
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    # Remove quotes if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                    elif value.startswith("'") and value.endswith("'"):
+                        value = value[1:-1]
+                    os.environ[key] = value
+
+_load_env_file()
+
 BASE_DIR = Path.home() / ".jarvis"
 DATA_DIR = BASE_DIR / "data"
 CACHE_DIR = BASE_DIR / "cache"
@@ -16,7 +36,7 @@ PROJECTS_FILE = DATA_DIR / "projects.json"
 LOG_FILE = LOG_DIR / "jarvis.log"
 
 API_URL = "https://api.bluesminds.com/v1"
-MODEL = "glm-4.6"
+MODEL = "gpt-5-mini"
 
 
 @dataclass(frozen=True)

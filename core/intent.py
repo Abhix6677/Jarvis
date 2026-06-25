@@ -72,6 +72,9 @@ _RECALL_ONLY_PATTERNS = [
     re.compile(r"^mera\s+([a-z]+)\s+kya\s+hai\??$", re.IGNORECASE),
 ]
 
+# Question words that indicate we should NOT save
+_QUESTION_WORDS = {"kya", "what", "which", "how", "why", "who", "where", "when", "?", "???"}
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -92,6 +95,7 @@ def detect_and_store_intent(
         return None
 
     from core.memory import MemoryManager
+    memory = MemoryManager()
 
     normalized = text.strip()
 
@@ -100,40 +104,68 @@ def detect_and_store_intent(
         if pattern.search(normalized):
             key_match = pattern.search(normalized)
             key = key_match.group(1).lower()
-            from core.memory import MemoryManager
-            data = MemoryManager().get_all()
+            data = memory.get_all()
             value = data.get(key)
             if value:
                 return f"{key}: {value}"
-            stored = MemoryManager().format_for_prompt()
+            stored = memory.format_for_prompt()
             return stored or f"I don't have your {key} saved."
 
-    # Generic "my X is Y" pattern - works WITHOUT "remember" keyword
-    generic_implicit = re.search(r"^my\s+(\w+)\s+is\s+(.+)$", normalized, re.IGNORECASE)
-    if generic_implicit:
-        from core.memory import MemoryManager
-        key = generic_implicit.group(1).strip().lower()
-        value = generic_implicit.group(2).strip()
-        MemoryManager().remember(key, value)
-        return f"Saved: {key} = {value}"
-
-    # Name-specific patterns
+    # Generic key-value patterns - works WITHOUT "remember" keyword
+    # Pattern: "my X is Y" or "my X name is Y" or "my X's name is Y"
+    
+    # Remove conversational prefixes (both English and Hindi)
+    # Check name-specific patterns FIRST (highest priority)
     implicit_name_en = re.search(r"^(?:my\s+)?name\s+(?:is\s+)?(.+)$", normalized, re.IGNORECASE)
     implicit_name_hi = re.search(r"^(?:mera\s+)?naam\s+(?!kya\b)(.+?)(?:\s+hai)?$", normalized, re.IGNORECASE)
 
     if implicit_name_en:
-        from core.memory import MemoryManager
         value = implicit_name_en.group(1).strip()
-        MemoryManager().remember("name", value)
+        memory.remember("name", value)
         return f"Saved: name = {value}"
 
     if implicit_name_hi:
-        from core.memory import MemoryManager
         value = implicit_name_hi.group(1).strip()
-        MemoryManager().remember("name", value)
+        memory.remember("name", value)
         return f"Saved: name = {value}"
 
+    cleaned = re.sub(r"^(?:okay\s+listen|listen|actually|also|btw|aur|ya|toh|accha|sun)\s*", "", normalized, flags=re.IGNORECASE)
+    
+    key = None
+    value = None
+    
+    # Try English patterns
+    # Pattern 1: "my X is Y" (simple like "my profession is student")
+    kv_match = re.search(r"my\s+(\w+)\s+is\s+(.+)$", cleaned, re.IGNORECASE)
+    if not kv_match:
+        # Pattern 2: "my X name is Y" or "my X's name is Y" (like "my sister name is kiara")
+        kv_match = re.search(r"my\s+(\w+)(?:'s)?\s+name\s+is\s+(.+)$", cleaned, re.IGNORECASE)
+    
+    if kv_match:
+        key = kv_match.group(1).strip().lower()
+        value = kv_match.group(2).strip()
+    
+    # Try Hindi patterns (generic only, not name)
+    if not key:
+        # Pattern: "mera X Y hai" or "meri X Y hai" (like "mera profession student hai")
+        hindi_match = re.search(r"mer(?:a|i)\s+(?!naam\b)(\w+)\s+(.+?)(?:\s+hai\b)?$", cleaned, re.IGNORECASE)
+        if hindi_match:
+            key = hindi_match.group(1).strip().lower()
+            value = hindi_match.group(2).strip()
+    
+    # Save if we found a valid key-value pair and it's not a question
+    if key and value:
+        first_word = value.lower().split()[0] if value.split() else ""
+        if first_word not in _QUESTION_WORDS and "?" not in value:
+            memory.remember(key, value)
+            return f"Saved: {key} = {value}"
+
+    # Process intent patterns (skip "remember" since we already handled it above)
     for intent_name, pattern in _INTENT_PATTERNS.items():
+        # Skip remember intent - already handled by generic patterns above
+        if intent_name == "remember":
+            continue
+            
         try:
             match = pattern.search(normalized)
         except re.error:
@@ -145,43 +177,7 @@ def detect_and_store_intent(
         groupdict = match.groupdict()
         content = (groupdict.get("content") or "").strip()
 
-        memory = MemoryManager()
-
-        # ---------------- REMEMBER ----------------
-        if intent_name == "remember":
-            key = None
-            value = None
-
-            # key=value pattern
-            if content and "=" in content:
-                parts = content.split("=", 1)
-                key = parts[0].strip().lower()
-                value = parts[1].strip()
-            else:
-                full_text = normalized
-
-                # Generic pattern: "my X is Y"
-                generic_match = re.search(r"my\s+(\w+)\s+is\s+(.+)$", full_text, re.IGNORECASE)
-                name_match = re.search(r"(?:my\s+)?name\s+(?:is\s+)?(.+)$", full_text, re.IGNORECASE)
-                hindi_match = re.search(r"(?:mera\s+)?naam\s+(.+?)(?:\s+hai)?$", full_text, re.IGNORECASE)
-
-                if generic_match:
-                    key = generic_match.group(1).strip().lower()
-                    value = generic_match.group(2).strip()
-                elif name_match:
-                    key = "name"
-                    value = name_match.group(1).strip()
-                elif hindi_match:
-                    key = "name"
-                    value = hindi_match.group(1).strip()
-                elif content:
-                    key = "note"
-                    value = content
-
-            if key and value:
-                memory.remember(key, value)
-                return f"Saved: {key} = {value}"
-
+        # Re-instantiate memory for safety
         # ---------------- FORGET ----------------
         if intent_name == "forget" and content:
             key = content.strip()

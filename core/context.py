@@ -26,36 +26,29 @@ class ContextBuilder:
     @property
     def history(self) -> HistoryManager:
         if self._history is None:
-            try:
-                self._history = HistoryManager()
-            except Exception:
-                self._history = HistoryManager()
+            self._history = HistoryManager()
         return self._history
 
     @property
     def summary(self) -> SummaryManager:
         if self._summary is None:
-            try:
-                self._summary = SummaryManager()
-            except Exception:
-                self._summary = SummaryManager()
+            self._summary = SummaryManager()
         return self._summary
 
     @property
     def memory(self) -> MemoryManager:
         if self._memory is None:
-            try:
-                self._memory = MemoryManager()
-            except Exception:
-                self._memory = MemoryManager()
+            self._memory = MemoryManager()
         return self._memory
 
     def _detect_project(self) -> str:
         try:
             root, _ = detect_project_root()
             return compute_project_id(root)
-        except Exception:
-            # Exceptional safeguard only
+        except Exception as e:
+            from core.logger import get_logger
+            logger = get_logger("jarvis.context")
+            logger.warning(f"Project detection failed: {e}, using current directory name")
             return Path.cwd().name
 
     def _load_project_memory(self, project_id: str) -> str:
@@ -63,8 +56,10 @@ class ContextBuilder:
             project_dir = resolve_project_directory()
             migrate_legacy_if_needed(project_id, project_dir)
             project_file = resolve_project_memory_file()
-        except Exception:
-            # Exceptional safeguard only
+        except Exception as e:
+            from core.logger import get_logger
+            logger = get_logger("jarvis.context")
+            logger.warning(f"Project memory file resolution failed: {e}, using projects directory")
             project_file = PROJECTS_DIR / f"{project_id}.json"
 
         data = safe_load_json(project_file, {})

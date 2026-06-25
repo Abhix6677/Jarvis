@@ -64,16 +64,68 @@ def main() -> int:
 
     # Step 3: Conversational LLM fallback
     try:
+        from core.logger import get_logger
+        from core.history import HistoryManager
+        from core.summary import SummaryManager
+        
+        logger = get_logger("jarvis.main")
+        logger.info(f"Processing natural language input: {text_input[:50]}...")
+        
         context_builder = ContextBuilder()
         messages = context_builder.build(text_input)
 
+        import threading
+        import itertools
+        import time
+
+        def _spinner(stop_event):
+            for ch in itertools.cycle('|/-\\'):
+                if stop_event.is_set():
+                    break
+                # carriage return to keep on the same line
+                sys.stdout.write('\rProcessing... ' + ch)
+                sys.stdout.flush()
+                time.sleep(0.1)
+            # clear the line once done
+            sys.stdout.write('\r' + ' ' * 40 + '\r')
+            sys.stdout.flush()
+
+        stop_event = threading.Event()
+        spinner_thread = threading.Thread(target=_spinner, args=(stop_event,), daemon=True)
+        spinner_thread.start()
+
         client = get_client()
-        raw_response = client.chat(messages)
+        try:
+            raw_response = client.chat(messages)
+        finally:
+            stop_event.set()
+            spinner_thread.join()
 
         clean_text = ResponseParser.extract_text(raw_response)
         print(clean_text)
+        
+        # Save to history
+        history = HistoryManager()
+        history.add("user", text_input)
+        history.add("assistant", clean_text)
+        
+        # Check if summary should be updated
+        if history.should_summarize():
+            logger.info("History limit reached, triggering summary update...")
+            summary_manager = SummaryManager()
+            history_messages = str(history._load())
+            summary_manager.update_summary(history_messages)
+            # After summarizing, clear old history
+            logger.info("Clearing old history after summarization")
+            history.clear()
+            history.add("user", text_input)
+            history.add("assistant", clean_text)
+        
         return 0
     except Exception as exc:
+        from core.logger import get_logger
+        logger = get_logger("jarvis.main")
+        logger.error(f"LLM error: {exc}", exc_info=True)
         print(f"LLM error: {exc}")
         return 1
 
