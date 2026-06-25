@@ -77,9 +77,36 @@ class GPTClient:
                 if not isinstance(message, dict):
                     raise RuntimeError("Invalid API response: missing assistant message.")
 
-                # Reject tool / function call responses explicitly
-                if message.get("tool_calls") or message.get("function_call"):
-                    raise RuntimeError("Provider returned tool call instead of user-visible text.")
+                # Handle tool calls (memory integration)
+                tool_calls = message.get("tool_calls")
+                if isinstance(tool_calls, list) and tool_calls:
+                    from core.memory import MemoryManager
+                    memory = MemoryManager()
+
+                    for call in tool_calls:
+                        function = call.get("function") if isinstance(call, dict) else None
+                        if not isinstance(function, dict):
+                            continue
+                        name = function.get("name")
+                        arguments = function.get("arguments")
+
+                        if name == "bio" and isinstance(arguments, str):
+                            try:
+                                import json
+                                data_args = json.loads(arguments)
+                                value = data_args.get("text") or data_args.get("value")
+                                if isinstance(value, str) and value.strip():
+                                    memory.remember("name", value.strip())
+                            except Exception:
+                                continue
+
+                    # After executing tool, request final assistant reply
+                    messages.append({
+                        "role": "tool",
+                        "content": "Memory updated successfully."
+                    })
+
+                    return self.chat(messages, temperature)
 
                 if message.get("role") != "assistant":
                     raise RuntimeError("Invalid API response: expected assistant role.")
