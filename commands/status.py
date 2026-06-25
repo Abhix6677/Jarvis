@@ -1,4 +1,5 @@
 import subprocess
+from commands.registry import register_command
 
 
 def run(args: list):
@@ -15,3 +16,7 @@ def run(args: list):
 
     except Exception as e:
         print(f"Git status error: {e}")
+
+
+def register():
+    register_command("status", run, "Show git repository status")

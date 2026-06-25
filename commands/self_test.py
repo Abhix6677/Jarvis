@@ -12,7 +12,7 @@ from typing import Any, Dict
 from core import api
 from core import memory
 from core import project_resolver
-from core import router
+from commands import router
 from core import storage
 from core.logger import get_logger
 

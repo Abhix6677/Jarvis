@@ -1,64 +1,111 @@
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+"""
+Authoritative command registry for Jarvis CLI.
+
+This module provides a singleton-backed registry with a clean,
+consistent API surface. It is intentionally self-contained to avoid
+circular imports and side effects at import time.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from threading import RLock
+from typing import Callable, Dict
 
 
-@dataclass
-class CommandMetadata:
+@dataclass(frozen=True)
+class CommandMeta:
+    """Metadata container for a registered command."""
+
     name: str
-    module_path: str
-    entrypoint: str
-    description: Optional[str] = None
-    aliases: List[str] = field(default_factory=list)
-    loaded: bool = False
+    handler: Callable
+    description: str = ""
 
 
-class CommandRegistry:
+class _CommandRegistry:
+    """
+    Internal singleton registry implementation.
+
+    This class should not be used directly outside this module.
+    Use the module-level helper functions instead.
+    """
+
     def __init__(self) -> None:
-        self._commands: Dict[str, CommandMetadata] = {}
-        self._aliases: Dict[str, str] = {}
-        self._failed: Dict[str, str] = {}
+        self._commands: Dict[str, CommandMeta] = {}
+        self._lock = RLock()
 
-    def register(self, metadata: CommandMetadata) -> None:
-        if metadata.name in self._commands:
-            raise ValueError(f"Command '{metadata.name}' is already registered.")
+    @staticmethod
+    def _normalize(name: str) -> str:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Command name must be a non-empty string.")
+        return name.strip().lower()
 
-        # Prevent alias collisions with existing command names
-        for alias in metadata.aliases:
-            if alias in self._commands:
-                raise ValueError(
-                    f"Alias '{alias}' conflicts with an existing command name."
-                )
+    def register_command(
+        self,
+        name: str,
+        handler: Callable,
+        description: str = "",
+    ) -> None:
+        key = self._normalize(name)
 
-        # Prevent alias collisions with existing aliases
-        for alias in metadata.aliases:
-            if alias in self._aliases:
-                raise ValueError(
-                    f"Alias '{alias}' is already mapped to command '{self._aliases[alias]}'."
-                )
+        if not callable(handler):
+            raise ValueError(f"Handler for command '{name}' must be callable.")
 
-        self._commands[metadata.name] = metadata
+        with self._lock:
+            if key in self._commands:
+                raise ValueError(f"Command '{name}' is already registered.")
 
-        for alias in metadata.aliases:
-            self._aliases[alias] = metadata.name
+            self._commands[key] = CommandMeta(
+                name=key,
+                handler=handler,
+                description=description or "",
+            )
 
-    def get(self, name: str) -> Optional[CommandMetadata]:
-        # Direct command lookup
-        if name in self._commands:
-            return self._commands[name]
+    def get_command(self, name: str) -> CommandMeta | None:
+        key = self._normalize(name)
+        with self._lock:
+            return self._commands.get(key)
 
-        # Alias lookup
-        if name in self._aliases:
-            command_name = self._aliases[name]
-            return self._commands.get(command_name)
-
-        return None
-
-    def all_commands(self) -> List[str]:
-        return list(self._commands.keys())
-
-    def mark_failed(self, name: str, error: Exception) -> None:
-        self._failed[name] = str(error)
+    def list_commands(self) -> Dict[str, CommandMeta]:
+        with self._lock:
+            # Return a shallow copy to prevent external mutation
+            return dict(self._commands)
 
 
-# Global singleton instance
-registry = CommandRegistry()
+# --- Singleton instance (module-internal) ---
+
+_registry = _CommandRegistry()
+
+
+# --- Public module-level API ---
+
+
+def register_command(name: str, handler: Callable, description: str = "") -> None:
+    """
+    Register a command with the global registry.
+
+    :param name: Command name (case-insensitive).
+    :param handler: Callable that executes the command.
+    :param description: Optional human-readable description.
+    :raises ValueError: If the command already exists or inputs are invalid.
+    """
+    _registry.register_command(name=name, handler=handler, description=description)
+
+
+def get_command(name: str) -> CommandMeta | None:
+    """
+    Retrieve a command by name (case-insensitive).
+
+    :param name: Command name.
+    :return: CommandMeta if found, else None.
+    """
+    return _registry.get_command(name)
+
+
+def list_commands() -> Dict[str, CommandMeta]:
+    """
+    List all registered commands.
+
+    :return: Dictionary mapping normalized command names to CommandMeta.
+    """
+    return _registry.list_commands()

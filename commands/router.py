@@ -1,102 +1,89 @@
 """
-Router abstraction layer for command dispatching.
+Authoritative command routing layer.
 
-Phase 3 (Non-Breaking, Not Yet Activated):
-- Additive only
-- Not wired into CLI
-- Does not modify existing dispatch behavior
+This module provides a single public entrypoint:
+
+    dispatch(argv: list[str]) -> int
+
+Responsibilities:
+- Lazily discover commands exactly once
+- Parse CLI arguments
+- Resolve command handlers via registry
+- Execute handlers safely
+- Return integer exit codes
+- Provide clear error/help output
+
+No side effects occur at import time.
 """
 
-from __future__ import annotations
-
-import importlib
 from typing import List
 
-from core.intent import detect_and_store_intent
+from commands.registry import get_command, list_commands
 from commands.discovery import discover_commands
-from commands.registry import (
-    get_command,
-    list_commands as registry_list_commands,
-    mark_failed,
-)
 
 
-class CommandRouter:
-    """
-    Router abstraction for command dispatching.
+_DISCOVERED: bool = False
 
-    NOTE:
-    - Not instantiated globally
-    - Not integrated into jarvis.py
-    - Fully non-breaking and additive
-    """
 
-    def __init__(self) -> None:
-        self._initialized: bool = False
+def _ensure_discovered() -> None:
+    """Ensure command discovery runs exactly once."""
+    global _DISCOVERED
 
-    def initialize(self) -> None:
-        """
-        Discover and register commands.
-
-        Safe and idempotent.
-        """
-        if self._initialized:
-            return
-
+    if not _DISCOVERED:
         discover_commands()
-        self._initialized = True
+        _DISCOVERED = True
 
-    def dispatch(self, name: str, args: List[str]) -> int:
-        """
-        Dispatch a command by name.
 
-        Behavior:
-        - Lookup command in registry
-        - Lazy import module if not yet loaded
-        - Execute entrypoint safely
-        - Return 0 on success, 1 on failure
-        - No exceptions escape
-        """
-        try:
-            self.initialize()
+def _print_available_commands() -> None:
+    """Print available registered commands."""
+    commands = sorted(list_commands())
 
-            metadata = get_command(name)
-            if metadata is None:
-                return 1
+    if not commands:
+        print("No commands available.")
+        return
 
-            # Lazy load module
-            if not getattr(metadata, "loaded", False):
-                try:
-                    importlib.import_module(metadata.module_path)
-                    metadata.loaded = True
-                except Exception:
-                    mark_failed(name)
-                    return 1
+    print("Available commands:")
+    for name in commands:
+        print(f"  {name}")
 
-            # Resolve entrypoint after import
-            entrypoint = getattr(metadata, "entrypoint", None)
-            if entrypoint is None:
-                return 1
 
-            try:
-                # Lightweight intent detection before LLM dispatch
-                joined = " ".join(args)
-                intent_response = detect_and_store_intent(joined)
-                if intent_response:
-                    print(intent_response)
-                    return 0
+def dispatch(argv: List[str]) -> int:
+    """
+    Dispatch a CLI invocation.
 
-                result = entrypoint(args)
-                return 0 if result is None or result == 0 else 1
-            except Exception:
-                return 1
+    Args:
+        argv: List of CLI arguments excluding the program name.
 
-        except Exception:
-            return 1
+    Returns:
+        Integer exit code.
+    """
+    _ensure_discovered()
 
-    def list_commands(self) -> List[str]:
-        """
-        Return list of registered command names.
-        """
-        self.initialize()
-        return registry_list_commands()
+    # No command provided
+    if not argv:
+        _print_available_commands()
+        return 1
+
+    command_name = argv[0]
+    args = argv[1:]
+
+    meta = get_command(command_name)
+
+    # Unknown command (silent fallback)
+    if meta is None:
+        return 1
+
+    handler = meta.handler
+
+    try:
+        result = handler(args)
+    except Exception as exc:
+        print(f"Error while executing '{command_name}': {exc}")
+        return 1
+
+    # Normalize return value to int exit code
+    if isinstance(result, int):
+        return result
+
+    # If handler returns None or non-int, treat as success
+    return 0

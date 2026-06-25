@@ -1,99 +1,120 @@
 """
-Command auto-discovery module.
+Command discovery module.
 
-This module provides a safe, isolated discovery mechanism for command
-modules located in the `commands/` package. It does NOT modify CLI
-dispatch behavior and must be invoked manually.
+Responsible for dynamically importing command modules within the
+`commands` package and invoking their `register()` function if present.
+
+This module does NOT perform discovery at import time. Discovery must be
+explicitly triggered by calling `discover_commands()`.
 """
-
-from __future__ import annotations
 
 import importlib
 import pkgutil
 from types import ModuleType
-from typing import Optional
-
-from commands.registry import CommandRegistry, CommandMetadata
+from typing import Callable
 
 
-# Files that must never be auto-discovered
+# Modules that must NOT be auto-imported during discovery
 _EXCLUDED_MODULES = {
     "__init__",
     "registry",
+    "router",
     "discovery",
 }
 
 
-def _safe_import(module_path: str) -> Optional[ModuleType]:
+def _import_module(module_name: str) -> ModuleType:
     """
-    Safely import a module by path.
+    Import a module from the commands package using an absolute import.
 
-    Returns the imported module if successful, otherwise None.
-    No exceptions are allowed to escape.
+    Args:
+        module_name: The short module name (without package prefix).
+
+    Returns:
+        The imported module.
+
+    Raises:
+        ImportError: If the module cannot be imported.
     """
+    full_module_path = f"commands.{module_name}"
+
     try:
-        return importlib.import_module(module_path)
-    except Exception:
-        return None
+        return importlib.import_module(full_module_path)
+    except Exception as exc:
+        raise ImportError(
+            f"Failed to import command module '{full_module_path}': {exc}"
+        ) from exc
+
+
+def _call_register(module: ModuleType) -> None:
+    """
+    Call the `register()` function of a module if it exists.
+
+    Args:
+        module: The imported module.
+
+    Raises:
+        RuntimeError: If `register` exists but is not callable.
+        Exception: Propagates any exception raised by register().
+    """
+    register: Callable | None = getattr(module, "register", None)
+
+    if register is None:
+        return
+
+    if not callable(register):
+        raise RuntimeError(
+            f"Module '{module.__name__}' has a 'register' attribute that is not callable."
+        )
+
+    try:
+        register()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Error while registering commands from module '{module.__name__}': {exc}"
+        ) from exc
 
 
 def discover_commands() -> None:
     """
-    Discover command modules inside the `commands` package and register
-    them into the CommandRegistry.
+    Discover and register all command modules in the `commands` package.
 
-    Behavior:
-    - Scans the commands/ directory.
-    - Ignores excluded modules.
-    - Safely imports each module.
-    - If module defines `run`, registers CommandMetadata.
-    - If import fails, marks command as failed.
-    - Idempotent: avoids duplicate registrations.
-    - Never raises exceptions.
+    This function:
+        - Iterates over modules in the commands package directory.
+        - Skips internal modules (registry, router, discovery, __init__).
+        - Dynamically imports each command module.
+        - Calls its `register()` function if exposed.
 
-    NOTE: This function must be called manually. It is NOT executed at
-    import time to preserve backward compatibility.
+    This function must be called explicitly. No discovery occurs at import time.
     """
+    package_name = "commands"
+
     try:
-        package = importlib.import_module("commands")
+        package = importlib.import_module(package_name)
+    except Exception as exc:
+        raise ImportError(
+            f"Unable to import '{package_name}' package during discovery: {exc}"
+        ) from exc
 
-        for module_info in pkgutil.iter_modules(package.__path__):
-            name = module_info.name
+    if not hasattr(package, "__path__"):
+        raise RuntimeError(
+            f"Package '{package_name}' does not have a valid __path__ for module discovery."
+        )
 
-            if name in _EXCLUDED_MODULES:
-                continue
+    for module_info in pkgutil.iter_modules(package.__path__):
+        module_name = module_info.name
 
-            module_path = f"commands.{name}"
+        if module_name in _EXCLUDED_MODULES:
+            continue
 
-            # Idempotency check: skip if already registered
-            if CommandRegistry.get(name) is not None:
-                continue
+        try:
+            module = _import_module(module_name)
+        except Exception as exc:
+            print(f"[WARN] Skipping command module '{module_name}' due to import error: {exc}")
+            continue
 
-            module = _safe_import(module_path)
-
-            if module is None:
-                try:
-                    CommandRegistry.mark_failed(name, "Import failed")
-                except Exception:
-                    pass
-                continue
-
-            # Only register if module defines a callable `run`
-            run_attr = getattr(module, "run", None)
-            if callable(run_attr):
-                metadata = CommandMetadata(
-                    name=name,
-                    module_path=module_path,
-                    entrypoint="run",
-                    description=getattr(module, "__doc__", None),
-                    aliases=[],
-                )
-
-                try:
-                    CommandRegistry.register(metadata)
-                except Exception:
-                    # Prevent any registry-level failure from escaping
-                    pass
-    except Exception:
-        # Absolute safety: no exception may escape
-        return
+        try:
+            _call_register(module)
+        except Exception as exc:
+            print(f"[WARN] Skipping registration for module '{module_name}': {exc}")
+            continue
