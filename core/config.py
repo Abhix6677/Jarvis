@@ -15,8 +15,8 @@ SUMMARY_FILE = DATA_DIR / "summary.json"
 PROJECTS_FILE = DATA_DIR / "projects.json"
 LOG_FILE = LOG_DIR / "jarvis.log"
 
-API_URL = "https://api.bluesminds.com/v1/chat/completions"
-MODEL = "gpt-5.2-chat"
+API_URL = "https://api.bluesminds.com/v1"
+MODEL = "glm-4.6"
 
 
 @dataclass(frozen=True)

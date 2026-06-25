@@ -43,8 +43,11 @@ class GPTClient:
         for attempt in range(CONFIG.api_retries + 1):
             try:
                 self.logger.info(f"API request attempt {attempt + 1}")
+                # Ensure correct endpoint for chat completions
+                endpoint = self.api_url.rstrip("/") + "/chat/completions"
+
                 response = requests.post(
-                    self.api_url,
+                    endpoint,
                     headers=headers,
                     json=payload,
                     timeout=CONFIG.api_timeout,
