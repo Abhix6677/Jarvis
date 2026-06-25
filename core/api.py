@@ -85,7 +85,13 @@ class GPTClient:
                         "Invalid API response format: 'content' missing or empty."
                     )
 
-                return content.strip()
+                from core.response_parser import ResponseParser
+
+                parsed = ResponseParser.extract_text(content)
+                if not parsed:
+                    raise RuntimeError("Provider returned no user-visible content.")
+
+                return parsed
 
             except (RequestException, ValueError, RuntimeError) as e:
                 self.logger.error(f"API error: {e}")
