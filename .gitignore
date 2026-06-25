@@ -1,0 +1,24 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+
+# Data files (runtime-generated)
+data/*.json
+
+# Cache directory
+cache/*
+!cache/.gitkeep
+
+# Logs
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Virtual environments
+.venv/
+venv/
