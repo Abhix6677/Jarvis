@@ -78,6 +78,13 @@ class ContextBuilder:
         # 1. System Prompt
         system_content = CONFIG.system_prompt
 
+        # Enforce authoritative memory usage
+        system_content += (
+            "\n\nIMPORTANT: Persistent memory below contains authoritative facts about the user. "
+            "If a fact (e.g., user's name) exists in persistent memory, you MUST use it "
+            "unless the user explicitly changes it. Do not ignore stored identity facts."
+        )
+
         # 2. Long-term summary
         long_summary = self.summary.get_summary()
         if long_summary:
