@@ -65,6 +65,13 @@ _INTENT_PATTERNS: Dict[str, re.Pattern] = {
     "status": re.compile(r"\b(?:status|current\s+status|what'?s\s+the\s+status)\b", re.IGNORECASE),
 }
 
+# Additional question patterns for recall that should NOT trigger saving
+_RECALL_ONLY_PATTERNS = [
+    re.compile(r"^what\s+is\s+my\s+(\w+)\??$", re.IGNORECASE),
+    re.compile(r"^what'?s\s+my\s+(\w+)\??$", re.IGNORECASE),
+    re.compile(r"^mera\s+([a-z]+)\s+kya\s+hai\??$", re.IGNORECASE),
+]
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -88,14 +95,29 @@ def detect_and_store_intent(
 
     normalized = text.strip()
 
-    # Special-case implicit name declarations (English + Hindi)
-    # Avoid treating questions like "mera naam kya hai" as save operations
-    recall_hi_question = re.search(r"^mera\s+naam\s+kya\s+hai\??$", normalized, re.IGNORECASE)
-    if recall_hi_question:
-        from core.memory import MemoryManager
-        stored = MemoryManager().format_for_prompt()
-        return stored or "No stored memory found."
+    # Check if this is a recall-only question (should NOT trigger save)
+    for pattern in _RECALL_ONLY_PATTERNS:
+        if pattern.search(normalized):
+            key_match = pattern.search(normalized)
+            key = key_match.group(1).lower()
+            from core.memory import MemoryManager
+            data = MemoryManager().get_all()
+            value = data.get(key)
+            if value:
+                return f"{key}: {value}"
+            stored = MemoryManager().format_for_prompt()
+            return stored or f"I don't have your {key} saved."
 
+    # Generic "my X is Y" pattern - works WITHOUT "remember" keyword
+    generic_implicit = re.search(r"^my\s+(\w+)\s+is\s+(.+)$", normalized, re.IGNORECASE)
+    if generic_implicit:
+        from core.memory import MemoryManager
+        key = generic_implicit.group(1).strip().lower()
+        value = generic_implicit.group(2).strip()
+        MemoryManager().remember(key, value)
+        return f"Saved: {key} = {value}"
+
+    # Name-specific patterns
     implicit_name_en = re.search(r"^(?:my\s+)?name\s+(?:is\s+)?(.+)$", normalized, re.IGNORECASE)
     implicit_name_hi = re.search(r"^(?:mera\s+)?naam\s+(?!kya\b)(.+?)(?:\s+hai)?$", normalized, re.IGNORECASE)
 
@@ -133,15 +155,20 @@ def detect_and_store_intent(
             # key=value pattern
             if content and "=" in content:
                 parts = content.split("=", 1)
-                key = parts[0].strip()
+                key = parts[0].strip().lower()
                 value = parts[1].strip()
             else:
-                # English implicit: "my name is X" even without 'remember'
                 full_text = normalized
+
+                # Generic pattern: "my X is Y"
+                generic_match = re.search(r"my\s+(\w+)\s+is\s+(.+)$", full_text, re.IGNORECASE)
                 name_match = re.search(r"(?:my\s+)?name\s+(?:is\s+)?(.+)$", full_text, re.IGNORECASE)
                 hindi_match = re.search(r"(?:mera\s+)?naam\s+(.+?)(?:\s+hai)?$", full_text, re.IGNORECASE)
 
-                if name_match:
+                if generic_match:
+                    key = generic_match.group(1).strip().lower()
+                    value = generic_match.group(2).strip()
+                elif name_match:
                     key = "name"
                     value = name_match.group(1).strip()
                 elif hindi_match:
@@ -162,7 +189,15 @@ def detect_and_store_intent(
             return f"Removed: {key}"
 
         # ---------------- RECALL ----------------
-        if intent_name == "recall" and content:
+        if intent_name == "recall":
+            # Try to extract specific key from question
+            key_match = re.search(r"(?:my|mera)\s+(\w+)", normalized, re.IGNORECASE)
+            if key_match:
+                key = key_match.group(1).lower()
+                data = memory.get_all()
+                value = data.get(key)
+                if value:
+                    return f"{key}: {value}"
             stored = memory.format_for_prompt()
             return stored or "No stored memory found."
 
