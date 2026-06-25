@@ -61,37 +61,46 @@ class GPTClient:
 
                 data = response.json()
 
+                # Provider-aware parsing
+                # Expected OpenAI-style schema:
+                # { "choices": [ { "message": { "role": "assistant", "content": ... , ... } } ] }
+
                 choices = data.get("choices")
                 if not isinstance(choices, list) or not choices:
-                    raise RuntimeError(
-                        "Invalid API response format: 'choices' missing or empty."
-                    )
+                    raise RuntimeError("Invalid API response: missing choices.")
 
                 first_choice = choices[0]
                 if not isinstance(first_choice, dict):
-                    raise RuntimeError(
-                        "Invalid API response format: 'choices[0]' is malformed."
-                    )
+                    raise RuntimeError("Invalid API response: malformed choice object.")
 
                 message = first_choice.get("message")
                 if not isinstance(message, dict):
-                    raise RuntimeError(
-                        "Invalid API response format: 'message' missing or malformed."
-                    )
+                    raise RuntimeError("Invalid API response: missing assistant message.")
 
+                if message.get("role") != "assistant":
+                    raise RuntimeError("Invalid API response: expected assistant role.")
+
+                # Handle string content
                 content = message.get("content")
-                if not isinstance(content, str) or not content.strip():
-                    raise RuntimeError(
-                        "Invalid API response format: 'content' missing or empty."
-                    )
 
-                from core.response_parser import ResponseParser
+                # Case 1: content is simple string
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
 
-                parsed = ResponseParser.extract_text(content)
-                if not parsed:
-                    raise RuntimeError("Provider returned no user-visible content.")
+                # Case 2: content is structured blocks (list)
+                if isinstance(content, list):
+                    text_blocks = []
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") == "text":
+                            text_value = block.get("text")
+                            if isinstance(text_value, str) and text_value.strip():
+                                text_blocks.append(text_value.strip())
+                    if text_blocks:
+                        return "\n".join(text_blocks).strip()
 
-                return parsed
+                raise RuntimeError("Provider returned no user-visible assistant text.")
 
             except (RequestException, ValueError, RuntimeError) as e:
                 self.logger.error(f"API error: {e}")
