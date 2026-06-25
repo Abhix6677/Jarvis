@@ -1,45 +1,33 @@
-from typing import Any, Dict, List
+import re
 
 
 class ResponseParser:
-    """
-    Extracts only safe, user-visible assistant text from
-    provider responses.
-
-    Filters out:
-    - tool calls
-    - metadata
-    - commentary
-    - reasoning blocks
-    - protocol tokens
-    - structured JSON
-    """
-
     @staticmethod
     def extract_text(content: str) -> str:
         if not isinstance(content, str):
             return ""
 
-        lines = content.splitlines()
-        cleaned: List[str] = []
+        cleaned = content
 
-        for line in lines:
-            stripped = line.strip()
+        # Remove inline tool tokens
+        cleaned = re.sub(r"to=\w+", "", cleaned)
+        cleaned = re.sub(r"\b(commentary|analysis|bio)\b", "", cleaned, flags=re.IGNORECASE)
 
-            # Filter internal protocol markers
-            if not stripped:
-                continue
-            if stripped.lower() in {"bio", "commentary", "analysis"}:
-                continue
-            if stripped.startswith("to="):
-                continue
-            if stripped.startswith("{") and stripped.endswith("}"):
-                continue
-            if stripped.startswith("[") and stripped.endswith("]"):
-                continue
-            if stripped.startswith("json"):
-                continue
+        # Remove JSON fragments
+        cleaned = re.sub(r"\{[^{}]*\}", "", cleaned)
 
-            cleaned.append(line)
+        # Remove CJK / Thai ranges
+        cleaned = re.sub(r"[\u4e00-\u9fff\u0e00-\u0e7f]+", "", cleaned)
 
-        return "\n".join(cleaned).strip()
+        # Normalize whitespace
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        return cleaned
+
+
+# Simple internal test
+if __name__ == "__main__":
+    test_input = (
+        "User's name is abhix. to=bio commentary json {\"name\":\"abhix\"} 代理联系"
+    )
+    print(ResponseParser.extract_text(test_input))

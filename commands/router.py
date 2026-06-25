@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 from typing import List
 
+from core.intent import detect_and_store_intent
 from commands.discovery import discover_commands
 from commands.registry import (
     get_command,
@@ -78,6 +79,13 @@ class CommandRouter:
                 return 1
 
             try:
+                # Lightweight intent detection before LLM dispatch
+                joined = " ".join(args)
+                intent_response = detect_and_store_intent(joined)
+                if intent_response:
+                    print(intent_response)
+                    return 0
+
                 result = entrypoint(args)
                 return 0 if result is None or result == 0 else 1
             except Exception:

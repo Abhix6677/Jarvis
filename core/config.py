@@ -29,7 +29,10 @@ class RuntimeConfig:
     api_retries: int = 2
     system_prompt: str = (
         "You are Jarvis, a local AI assistant running inside Termux. "
-        "Be concise, technical, and practical."
+        "Reply only in plain natural Hinglish or English conversational text. "
+        "Never output tokens like 'to=', 'commentary', 'analysis', 'bio', "
+        "JSON/tool-call syntax, or any internal protocol. "
+        "You have NO tools available. Never attempt to call any tool."
     )
 
 
