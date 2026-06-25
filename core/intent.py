@@ -165,7 +165,7 @@ def detect_and_store_intent(
         # Skip remember intent - already handled by generic patterns above
         if intent_name == "remember":
             continue
-            
+
         try:
             match = pattern.search(normalized)
         except re.error:
@@ -200,5 +200,47 @@ def detect_and_store_intent(
         # ---------------- STATUS ----------------
         if intent_name == "status":
             return "Jarvis is running."
+
+    # ---------------- AUTO-FIX / PATCH REQUEST ----------------
+    # Recognize user requests like "fix error", "auto-fix", "patch error <id>", or "fix last error"
+    fix_match = re.search(r"\b(?:fix|auto-?fix|patch)\b(?:\s+error\s+(?P<id>err-[\w-]+|last))?", normalized, re.IGNORECASE)
+    if fix_match:
+        # Use the error registry in MemoryManager
+        try:
+            # Note: MemoryManager provides list_errors() and get_error()
+            eid = (fix_match.group("id") or "last").strip()
+            errors = memory.list_errors()
+            if not errors:
+                return "No recorded errors to fix."
+
+            if eid == "last":
+                entry = errors[-1]
+            else:
+                entry = memory.get_error(eid)
+                if entry is None:
+                    return f"No error found with id {eid}."
+
+            # Build a concise prompt for the LLM to propose a minimal patch
+            prompt = (
+                f"You are a coding assistant. Propose a minimal patch (unified diff) and a short explanation to fix the following error.\n"
+                f"File: {entry.get('file')}\n"
+                f"Line: {entry.get('line')}\n"
+                f"Stack/Trace:\n{entry.get('stack')}\n\n"
+                "If you cannot determine a safe patch, explain why and suggest the next diagnostic steps."
+            )
+
+            from core.api import get_client
+
+            client = get_client()
+            try:
+                suggestion = client.chat([{"role": "user", "content": prompt}], temperature=0.2)
+            except Exception as e:
+                return f"Auto-fix attempt failed while contacting LLM: {e}"
+
+            # Save suggestion keyed by error id for later review/apply
+            memory.remember(f"auto_fix:{entry.get('id')}", suggestion)
+            return f"Auto-fix suggestion saved under key: auto_fix:{entry.get('id')}"
+        except Exception as exc:
+            return f"Auto-fix flow failed: {exc}"
 
     return None
